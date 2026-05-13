@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
 
-from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 from langchain_core.messages import SystemMessage, HumanMessage
 from dotenv import load_dotenv
 
@@ -113,7 +113,9 @@ class State(TypedDict):
 # -----------------------------
 # 2) LLM
 # -----------------------------
-llm = ChatOpenAI(model="gpt-4.1-mini")
+TEXT_MODEL = os.getenv("OLLAMA_TEXT_MODEL", "qwen2.5:1.5b")
+ENABLE_IMAGE_GENERATION = os.getenv("ENABLE_IMAGE_GENERATION", "false").lower() == "true"
+llm = ChatOllama(model=TEXT_MODEL, temperature=0)
 
 # -----------------------------
 # 3) Router
@@ -400,6 +402,12 @@ Return strictly GlobalImagePlan.
 """
 
 def decide_images(state: State) -> dict:
+    if not ENABLE_IMAGE_GENERATION:
+        return {
+            "md_with_placeholders": state["merged_md"],
+            "image_specs": [],
+        }
+
     planner = llm.with_structured_output(GlobalImagePlan)
     merged_md = state["merged_md"]
     plan = state["plan"]
@@ -479,6 +487,8 @@ def _safe_slug(title: str) -> str:
     s = re.sub(r"\s+", "_", s).strip("_")
     return s or "blog"
 
+SAVED_BLOGS_DIR = Path("saved_blogs")
+
 
 def generate_and_place_images(state: State) -> dict:
     plan = state["plan"]
@@ -486,11 +496,12 @@ def generate_and_place_images(state: State) -> dict:
 
     md = state.get("md_with_placeholders") or state["merged_md"]
     image_specs = state.get("image_specs", []) or []
+    SAVED_BLOGS_DIR.mkdir(exist_ok=True)
 
     # If no images requested, just write merged markdown
     if not image_specs:
         filename = f"{_safe_slug(plan.blog_title)}.md"
-        Path(filename).write_text(md, encoding="utf-8")
+        (SAVED_BLOGS_DIR / filename).write_text(md, encoding="utf-8")
         return {"final": md}
 
     images_dir = Path("images")
@@ -521,7 +532,7 @@ def generate_and_place_images(state: State) -> dict:
         md = md.replace(placeholder, img_md)
 
     filename = f"{_safe_slug(plan.blog_title)}.md"
-    Path(filename).write_text(md, encoding="utf-8")
+    (SAVED_BLOGS_DIR / filename).write_text(md, encoding="utf-8")
     return {"final": md}
 
 # build reducer subgraph

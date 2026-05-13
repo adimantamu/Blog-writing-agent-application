@@ -50,24 +50,29 @@ def images_zip(images_dir: Path) -> Optional[bytes]:
                 z.write(p, arcname=str(p))
     return buf.getvalue()
 
+SAVED_BLOGS_DIR = Path("saved_blogs")
+
 
 def try_stream(graph_app, inputs: Dict[str, Any]) -> Iterator[Tuple[str, Any]]:
     """
     Stream graph progress if available; else invoke.
-    Yields ("updates"/"values"/"final", payload).
+    Uses values mode so the last streamed payload is already the final state.
+    Yields ("values"/"final", payload).
     """
     try:
-        for step in graph_app.stream(inputs, stream_mode="updates"):
-            yield ("updates", step)
-        out = graph_app.invoke(inputs)
-        yield ("final", out)
-        return
+        final_state = None
+        for step in graph_app.stream(inputs, stream_mode="values"):
+            final_state = step
+            yield ("values", step)
+        if final_state is not None:
+            yield ("final", final_state)
+            return
     except Exception:
         pass
 
     try:
-        for step in graph_app.stream(inputs, stream_mode="values"):
-            yield ("values", step)
+        for step in graph_app.stream(inputs, stream_mode="updates"):
+            yield ("updates", step)
         out = graph_app.invoke(inputs)
         yield ("final", out)
         return
@@ -161,11 +166,10 @@ def render_markdown_with_local_images(md: str):
 # -----------------------------
 def list_past_blogs() -> List[Path]:
     """
-    Returns .md files in current working directory, newest first.
-    Filters out obvious non-blog markdown files if needed.
+    Returns saved blog markdown files, newest first.
     """
-    cwd = Path(".")
-    files = [p for p in cwd.glob("*.md") if p.is_file()]
+    SAVED_BLOGS_DIR.mkdir(exist_ok=True)
+    files = [p for p in SAVED_BLOGS_DIR.glob("*.md") if p.is_file()]
     files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return files
 
@@ -207,7 +211,7 @@ with st.sidebar:
 
     past_files = list_past_blogs()
     if not past_files:
-        st.caption("No saved blogs found (*.md in current folder).")
+        st.caption("No saved blogs found in `saved_blogs/`.")
         selected_md_file = None
     else:
         # Build labels from file name + (optional) parsed title
